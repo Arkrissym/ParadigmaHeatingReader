@@ -269,10 +269,15 @@ def main(args):
         try:
             hc = HeatingConnector(ip, port, args.influxhost, args.influxport, args.verbosity)
             hc.connect()
+            print("connected")
             hc.mainMenu()
+            print("Main Menu Opened")
             hc.warmwasser()
+            print("WarmWasser Handled")
             hc.solar()
+            print("Solar Handled")
             hc.closeAndSubmit()
+            print("Finished")
         except:
             print(f'Error happened while requesting')
         time.sleep(600)
