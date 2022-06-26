@@ -6,16 +6,26 @@ from itertools import takewhile
 from datetime import datetime
 from influxdb import InfluxDBClient
 import time
+import argparse
 
 
-def debugData(data, i):
-    filtered_characters = ' '.join(list(chr(s) if chr(s).isprintable() else '.' for s in data))
-    d = ' '.join(["{:02x}".format(x) for x in data])
-    offset = 0
-    #print(f'{i}:')
-    while offset * 3 < len(d):
-        #print(f'{d[offset*3:(offset*3)+24]} {d[offset*3+24:offset*3+48]}\t{filtered_characters[offset*2:(offset*2) + 16]} {filtered_characters[offset*2 + 16 : offset*2 + 32]}')
-        offset = offset + 16
+
+class Debugger(object):
+
+    def __init__(self, verbose):
+        if verbose > 0:
+            self.verbose = True
+
+
+    def debugData(self, data, i):
+        if self.verbose:
+            filtered_characters = ' '.join(list(chr(s) if chr(s).isprintable() else '.' for s in data))
+            d = ' '.join(["{:02x}".format(x) for x in data])
+            offset = 0
+            print(f'{i}:')
+            while offset * 3 < len(d):
+                print(f'{d[offset*3:(offset*3)+24]} {d[offset*3+24:offset*3+48]}\t{filtered_characters[offset*2:(offset*2) + 16]} {filtered_characters[offset*2 + 16 : offset*2 + 32]}')
+                offset = offset + 16
 
 
 
@@ -63,14 +73,17 @@ def extractWarmwasserInfo(data):
 
 
 class HeatingConnector(object):
-    def __init__(self, ip, port):
+    def __init__(self, ip, port, influxhost, influxport, verbose):
         self.controller = (ip, port)
+        self.influxhost = influxhost
+        self.influxport = influxport
         self.token = None
         self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.warmWasserTemp = None
         self.maxTemp = None
         self.panelTemp = None
         self.totalKwh = None
+        self.debugger = Debugger(verbose)
 
     def recv(self):
         data, _address = self.s.recvfrom(2048)
@@ -88,16 +101,17 @@ class HeatingConnector(object):
         data = self.recv()
         assert len(data) == 7
         #assert data == bytes.fromhex('08 00 00 00 00 01 01')
-        debugData(data, "CONNECT_1")
+        
+        self.debugger.debugData(data, "CONNECT_1")
 
         data = self.recv()
         assert len(data) == 6
-        debugData(data, "CONNECT_2")
+        self.debugger.debugData(data, "CONNECT_2")
 
         self.send(bytes.fromhex('f0 01 16 00 01 14 00 02'))
         data = self.recv()
         assert len(data) == 6
-        debugData(data, "CONNECT_3")
+        self.debugger.debugData(data, "CONNECT_3")
 
         self.send(bytes.fromhex('f3 00 00 03 03 04 0e ff ff ff ff 74 56 01 00 56 72 41 b5'))
 
@@ -105,7 +119,7 @@ class HeatingConnector(object):
         data = self.recv()
         assert len(data) == 10
         assert data == bytes.fromhex('01 f7 00 f7 00 f7 03 00 00 00')
-        debugData(data, "CONNECT_4")
+        self.debugger.debugData(data, "CONNECT_4")
 
 
         # is this now the last of the initialization of the connection?
@@ -114,7 +128,7 @@ class HeatingConnector(object):
         self.send(bytes.fromhex('f7 00 01 00 00 00'))
 
         data = self.recv()
-        debugData(data, "CONNECT_5")
+        self.debugger.debugData(data, "CONNECT_5")
         #assert data[5:8] == bytes.fromhex('80 0a 00')
 
 
@@ -122,19 +136,19 @@ class HeatingConnector(object):
         self.send(bytes.fromhex('00 16 00 ff 13 00 dd 00 00 00 83 1f 00 00'))
         # NOTE this additional message with slightly changed content IS NEEDED, otherwise it's not going to switch!
         data = self.recv()
-        debugData(data, "MAIN_MENU_1")
+        self.debugger.debugData(data, "MAIN_MENU_1")
         self.send(bytes.fromhex('00 02 00 1e ff ff ff ff 00 00 ff 1f 00 00'))
         data = self.recv()
-        debugData(data, "MAIN_MENU_2")
+        self.debugger.debugData(data, "MAIN_MENU_2")
         
 
     def warmwasser(self):
         self.send(bytes.fromhex('00 02 00 ff 7c 00 4a 00 00 00 ff 1f 00 00'))
         data = self.recv()
-        debugData(data, "WARMWASSER_1")
+        self.debugger.debugData(data, "WARMWASSER_1")
         self.send(bytes.fromhex('00 14 00 20 ff ff ff ff 00 00 61 1f 00 00'))
         data = self.recv()
-        debugData(data, "WARMWASSER_2")
+        self.debugger.debugData(data, "WARMWASSER_2")
 
         self.warmWasserTemp = extractWarmwasserInfo(data)
 
@@ -142,130 +156,142 @@ class HeatingConnector(object):
         while True and counter < 4:
             self.send(bytes.fromhex('00 0b 00 ff ff ff ff ff 00 00 d0 1f 00 00'))
             data = self.recv()
-            debugData(data, "WARMWASSER_LEAVING_1")
+            self.debugger.debugData(data, "WARMWASSER_LEAVING_1")
             if len(data) == 8:
                 break
             counter += 1
 
         self.send(bytes.fromhex('00 02 00 ff 1c 00 db 00 00 00 ff 1f 00 00'))
         data = self.recv()
-        debugData(data, "WARMWASSER_LEAVING_2")
+        self.debugger.debugData(data, "WARMWASSER_LEAVING_2")
         if len(data) == 55:
             self.send(bytes.fromhex('00 0b 00 09 1e 00 db 00 00 00 d0 1f 00 00'))
             data = self.recv()
-            debugData(data, "WARMWASSER_LEAVING_3")
+            self.debugger.debugData(data, "WARMWASSER_LEAVING_3")
 
 
     def solar(self):
         self.send(bytes.fromhex('00 14 00 ff c8 00 4a 00 00 00 61 1f 00 00'))
         data = self.recv()
-        debugData(data, "SOLAR_1")
+        self.debugger.debugData(data, "SOLAR_1")
         self.send(bytes.fromhex('00 02 00 1f c8 00 4a 00 00 00 ff 1f 00 00'))
         data = self.recv()
-        debugData(data, "SOLAR_2")
+        self.debugger.debugData(data, "SOLAR_2")
         (self.totalKwh, self.panelTemp, self.maxTemp) = extractSolarInfo(data)
 
         counter = 0
         while True and counter < 4:
             self.send(bytes.fromhex('00 55 00 1f ff ff ff ff 00 00 62 1e 00 00'))
             data = self.recv()
-            debugData(data, "SOLAR_LEAVING_1")
+            self.debugger.debugData(data, "SOLAR_LEAVING_1")
             if len(data) == 8:
                 break
             counter += 1
 
         self.send(bytes.fromhex('00 02 00 ff 13 00 dd 00 00 00 ff 1f 00 00'))
         data = self.recv()
-        debugData(data, "SOLAR_LEAVING_2")
+        self.debugger.debugData(data, "SOLAR_LEAVING_2")
         if len(data) == 125:
             self.send(bytes.fromhex('00 13 00 01 13 00 dd 00 00 00 8a 1f 00 00'))
             data = self.recv()
-            debugData(data, "SOLAR_LEAVING_3")
+            self.debugger.debugData(data, "SOLAR_LEAVING_3")
 
 
     def closeAndSubmit(self):
         self.s.close()
 
-        client = InfluxDBClient(host='192.168.8.5', port=8086)
-        data = []
-        if self.maxTemp is not None:
-            data.append(
-                {
-                    "measurement": "\xb0\x43",
-                    "tags": {
-                        "entity_id": "Solarpanel Max",
-                    },
-                    "fields": {
-                        "value": self.maxTemp,
-                    },
-                }
-            )
-        if self.totalKwh is not None:
-            data.append(
-                {
-                    "measurement": "kWh",
-                    "tags": {
-                        "entity_id": "Solarpanel Total kwh",
-                    },
-                    "fields": {
-                        "value": self.totalKwh,
-                    },
-                }
-            )
-        if self.warmWasserTemp is not None:
-            data.append(
-                {
-                    "measurement": "\xb0\x43",
-                    "tags": {
-                        "entity_id": "Warmwassertank Temperature",
-                    },
-                    "fields": {
-                        "value": self.warmWasserTemp,
-                    },
-                }
-            )
-        if self.panelTemp is not None:
-            data.append(
-                {
-                    "measurement": "\xb0\x43",
-                    "tags": {
-                        "entity_id": "Solarpanel Temperature",
-                    },
-                    "fields": {
-                        "value": self.panelTemp,
+        if self.influxhost is not None:
+            client = InfluxDBClient(host=self.influxhost, port=self.influxport)
+            data = []
+            if self.maxTemp is not None:
+                data.append(
+                    {
+                        "measurement": "\xb0\x43",
+                        "tags": {
+                            "entity_id": "Solarpanel Max",
+                        },
+                        "fields": {
+                            "value": self.maxTemp,
+                        },
                     }
-                }
-            )
-        result = client.write_points(data, database='smarthome',
-                                    time_precision='ms', batch_size=10000,
-                                    protocol='json')
-        print(f'Result of Writing to influxdb: {result}')
+                )
+            if self.totalKwh is not None:
+                data.append(
+                    {
+                        "measurement": "kWh",
+                        "tags": {
+                            "entity_id": "Solarpanel Total kwh",
+                        },
+                        "fields": {
+                            "value": self.totalKwh,
+                        },
+                    }
+                )
+            if self.warmWasserTemp is not None:
+                data.append(
+                    {
+                        "measurement": "\xb0\x43",
+                        "tags": {
+                            "entity_id": "Warmwassertank Temperature",
+                        },
+                        "fields": {
+                            "value": self.warmWasserTemp,
+                        },
+                    }
+                )
+            if self.panelTemp is not None:
+                data.append(
+                    {
+                        "measurement": "\xb0\x43",
+                        "tags": {
+                            "entity_id": "Solarpanel Temperature",
+                        },
+                        "fields": {
+                            "value": self.panelTemp,
+                        }
+                    }
+                )
+            result = client.write_points(data, database='smarthome',
+                                        time_precision='ms', batch_size=10000,
+                                        protocol='json')
+            print(f'Result of Writing to influxdb: {result}')
+        else:
+            print(f'not writing to influx')
 
 
 
-if len(sys.argv) == 3:
-    # Get "IP address of Server" and also the "port number" from argument 1 and argument 2
-    ip = sys.argv[1]
-    port = int(sys.argv[2])
-else:
-    print("Run like : python3 client.py <arg1 server ip 192.168.1.102> <arg2 server port 4444 >")
-    exit(1)
+
+def main(args):
+    ip = args.host
+    port = args.port
+
+    while True:
+        try:
+            hc = HeatingConnector(ip, port, args.influxhost, args.influxport, args.verbosity)
+            hc.connect()
+            hc.mainMenu()
+            hc.warmwasser()
+            hc.solar()
+            hc.closeAndSubmit()
+        except:
+            print(f'Error happened while requesting')
+        time.sleep(600)
+
+if __name__=='__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--verbosity", help="output debug information of the messages received", default=0, action="count")
+    parser.add_argument("-t", "--host", help="IP address of the heating control")
+    parser.add_argument("-p", "--port",
+                        type=int,
+                        help="Port the Heating Controller is listening on (default: 3477)",
+                        default=3477)
+    parser.add_argument("--influxhost", help="Host of the InfluxDB the data to send to", default=None)
+    parser.add_argument("--influxport", help="the port of the InfluxDB to send the data to", default=8086, type=int)
 
 
+    args = parser.parse_args()
 
-
-while True:
-    try:
-        hc = HeatingConnector(ip, port)
-        hc.connect()
-        hc.mainMenu()
-        hc.warmwasser()
-        hc.solar()
-        hc.closeAndSubmit()
-    except:
-        print(f'Error happened while requesting')
-    time.sleep(600)
-
-
-sys.exit(-1)
-
+    if args.host is None:
+        print('you need to at least provide a parameter for the ip of the heating controller')
+    else:
+        main(args)
