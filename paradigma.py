@@ -13,12 +13,11 @@ import argparse
 class Debugger(object):
 
     def __init__(self, verbose):
-        if verbose > 0:
-            self.verbose = True
+        self.verbose = verbose
 
 
     def debugData(self, data, i):
-        if self.verbose:
+        if self.verbose > 0:
             filtered_characters = ' '.join(list(chr(s) if chr(s).isprintable() else '.' for s in data))
             d = ' '.join(["{:02x}".format(x) for x in data])
             offset = 0
@@ -269,15 +268,10 @@ def main(args):
         try:
             hc = HeatingConnector(ip, port, args.influxhost, args.influxport, args.verbosity)
             hc.connect()
-            print("connected")
             hc.mainMenu()
-            print("Main Menu Opened")
             hc.warmwasser()
-            print("WarmWasser Handled")
             hc.solar()
-            print("Solar Handled")
             hc.closeAndSubmit()
-            print("Finished")
         except:
             print(f'Error happened while requesting')
         time.sleep(600)
