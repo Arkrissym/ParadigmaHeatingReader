@@ -70,6 +70,48 @@ def extractWarmwasserInfo(data):
     return warmWasserTemp
 
 
+def extractKesselInfo(data):
+    kesselInOffset = data.find(b'\x12\x4b\x00\xa3\x00')
+    kesselIn = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselInOffset+5:]))]).strip()
+    if kesselIn[-2:] != '\xb0\x43':
+        return None
+
+    kesselIn = float(kesselIn[:-2].strip().replace(',','.'))
+    print(f'KesselIn: {kesselIn}')
+
+
+    kesselOutOffset = data.find(b'\x12\x4b\x00\x4c\x00')
+    kesselOut = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselOutOffset+5:]))]).strip()
+    if kesselOut[-2:] != '\xb0\x43':
+        return None
+ 
+    kesselOut = float(kesselOut[:-2].strip().replace(',','.'))
+    print(f'KesselOut: {kesselOut}')
+
+    kesselStateOffset = data.find(b'\x12\xf0\x00\x65\x00')
+    kesselState = ''.join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselStateOffset+5:]))]).strip()
+    print(f'Kessel State: {kesselState}')
+    return (kesselIn, kesselOut, kesselState)
+
+
+def extractKesselRunInfo(data):
+    kesselStartOffset = data.find(b'\x12\x2c\x01\x85\x00')
+    kesselStart = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselStartOffset+5:]))]).strip()
+
+    kesselStart = int(kesselStart.strip())
+    print(f'KesselStart: {kesselStart}')
+
+
+    kesselHoursOffset = data.find(b'\x12\x2c\x01\x4c\x00')
+    kesselHours = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselHoursOffset+5:]))]).strip()
+    if kesselHours[-2:] != ' h':
+        return None
+
+    kesselHours = int(kesselHours[:-1].strip())
+    print(f'KesselHours: {kesselHours}')
+
+    return (kesselHours, kesselStart) 
+
 
 class HeatingConnector(object):
     def __init__(self, ip, port, influxhost, influxport, verbose):
@@ -82,6 +124,11 @@ class HeatingConnector(object):
         self.maxTemp = None
         self.panelTemp = None
         self.totalKwh = None
+        self.kesselHours = None
+        self.kesselStarts = None
+        self.kesselIn = None
+        self.kesselOut = None
+        self.kesselState = None
         self.debugger = Debugger(verbose)
 
     def recv(self):
@@ -196,6 +243,72 @@ class HeatingConnector(object):
             self.debugger.debugData(data, "SOLAR_LEAVING_3")
 
 
+
+    def kessel(self):
+        self.send(bytes.fromhex('00 14 00 ff 81 00 b1 00 00 00 61 1f 00 00'))   
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_1")
+        self.send(bytes.fromhex('00 14 00 25 ff ff ff ff 00 00 61 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_2")
+        (self.kesselIn, self.kesselOut, self.kesselState) = extractKesselInfo(data)
+
+        counter = 0
+        while True and counter < 4:
+            self.send(bytes.fromhex('00 14 00 ff ff ff ff ff 00 00 9c 1f 00 00'))
+            data = self.recv()
+            self.debugger.debugData(data, "KESSEL_NEXT_1")
+            if len(data) == 8:
+                break
+            counter += 1
+
+        self.send(bytes.fromhex('00 02 00 ff 1e 01 e0 00 00 00 ff 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_NEXT_2")
+        if len(data) == 107:
+            self.send(bytes.fromhex('00 14 00 11 1e 01 e0 00 00 00 9c 1f 00 00'))
+            data = self.recv()
+            self.debugger.debugData(data, "KESSEL_NEXT_3")
+        
+        counter = 0
+        while True and counter < 4:
+            self.send(bytes.fromhex('00 07 00 ff ff ff ff ff 00 00 ec 1f 00 00'))
+            data = self.recv()
+            self.debugger.debugData(data, "KESSEL_FINAL_1")
+            if len(data) == 8:
+                break
+            counter +=1 
+
+        self.send(bytes.fromhex('00 07 00 ff 55 00 37 00 00 00 ec 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_INFO_1")
+        self.send(bytes.fromhex('00 02 00 15 55 00 37 00 00 00 ff 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_INFO_2")
+        (self.kesselHours, self.kesselStarts) = extractKesselRunInfo(data)
+
+
+        counter = 0
+        while True and counter < 4:
+            self.send(bytes.fromhex('00 0f 00 ff ff ff ff ff 00 00 b4 1f 00 00'))
+            data = self.recv()
+            self.debugger.debugData(data, "KESSEL_LEAVING_1")
+            if len(data) == 8:
+                break
+            counter += 1
+        
+        self.send(bytes.fromhex('00 02 00 ff 0e 01 0e 00 00 00 ff 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_LEAVING_2")
+        if len(data) == 83:
+            self.send(bytes.fromhex('00 0f 00 08 0e 01 0e 00 00 00 b4 1f 00 00'))
+            data = self.recv()
+            self.debugger.debugData(data, "KESSEL_LEAVING_3") 
+
+
+
+
+
     def closeAndSubmit(self):
         self.s.close()
 
@@ -250,6 +363,57 @@ class HeatingConnector(object):
                         }
                     }
                 )
+            if self.kesselHours is not None:
+                data.append(
+                    {
+                        "measurement": "h",
+                        "tags": {
+                            "entity_id": "GasTherme Laufzeit",
+                        },
+                        "fields": {
+                            "value": self.kesselHours,
+                        }
+                    }
+                )
+            if self.kesselStarts is not None:
+                data.append(
+                    {
+                        "measurement": "count",
+                        "tags": {
+                            "entity_id": "GasTherme Starts",
+                        },
+                        "fields": {
+                            "value": self.kesselStarts,
+                        }
+                    }
+                )
+            if self.kesselIn is not None:
+                data.append(
+                    {
+                        "measurement": "\xb0\x43",
+                        "tags": {
+                            "entity_id": "Kessel Eingang Temperature",
+                        },
+                        "fields": {
+                            "value": self.kesselIn,
+                        }
+                    }
+                )
+            if self.kesselOut is not None:
+                data.append(
+                    {
+                        "measurement": "\xb0\x43",
+                        "tags": {
+                            "entity_id": "Kessel Ausgang Temperature",
+                        },
+                        "fields": {
+                            "value": self.kesselOut,
+                        }
+                    }
+                )
+
+
+
             result = client.write_points(data, database='smarthome',
                                         time_precision='ms', batch_size=10000,
                                         protocol='json')
@@ -271,6 +435,7 @@ def main(args):
             hc.mainMenu()
             hc.warmwasser()
             hc.solar()
+            hc.kessel()
             hc.closeAndSubmit()
         except:
             print(f'Error happened while requesting')
