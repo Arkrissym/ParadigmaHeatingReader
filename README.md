@@ -1,5 +1,5 @@
 # ParadigmaHeatingReader
-A simple reverse engineered script to get data from a Paradigma Systacomfort 2 Heating Controller and adding it into an InfluxDB
+A simple reverse engineered script to get data from a Paradigma Systacomfort 2 Heating Controller and pushing it to an MQTT broker.
 
 Use at your own risk!
 
