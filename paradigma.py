@@ -85,13 +85,13 @@ class HeatingConnector(object):
     def extractWarmwasserInfo(self, data):
         warmWasserTempOffset = data.find(b'\x12\x2c\x01\x34\x00')
         warmWasserTemp = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[warmWasserTempOffset+5:]))]).strip()
-        if warmWasserTemp[-2:] != '\xb0\x43':
+        if warmWasserTemp[-2:] == '\xb0\x43':
             self.data["water-temp"] = float(warmWasserTemp[:-2].strip().replace(',','.'))
 
         warmWasserTargetTempOffset = data.find(b'\x12\x2c\x01\x56\x00')
         if warmWasserTargetTempOffset > -1:
             warmWasserTargetTemp = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[warmWasserTargetTempOffset+5:]))]).strip()
-            if warmWasserTargetTemp[-2:] != '\xb0\x43':
+            if warmWasserTargetTemp[-2:] == '\xb0\x43':
                 self.data["water-target-temp"] = float(warmWasserTargetTemp[:-2].strip().replace(',','.'))
 
 
@@ -133,6 +133,8 @@ class HeatingConnector(object):
         data = self.recv()
         assert len(data) == 7
         #assert data == bytes.fromhex('08 00 00 00 00 01 01')
+        # check if device is in use
+        assert data != bytes.fromhex('08 00 00 00 00 01 fe')
 
         self.debugger.debugData(data, "CONNECT_1")
 
@@ -237,64 +239,36 @@ class HeatingConnector(object):
 
 
     def kessel(self):
-        self.send(bytes.fromhex('00 14 00 ff 81 00 b1 00 00 00 61 1f 00 00'))
+        self.send(bytes.fromhex('00 02 00 ff ff ff ff ff 00 00 ff 1f 00 00'))
         data = self.recv()
         self.debugger.debugData(data, "KESSEL_1")
-        self.send(bytes.fromhex('00 14 00 25 ff ff ff ff 00 00 61 1f 00 00'))
+        self.send(bytes.fromhex('00 14 00 25 80 00 c0 00 00 00 61 1f 00 00'))
         data = self.recv()
         self.debugger.debugData(data, "KESSEL_2")
         self.extractKesselInfo(data)
 
-#        counter = 0
-#        while True and counter < 4:
-#            self.send(bytes.fromhex('00 14 00 ff ff ff ff ff 00 00 9c 1f 00 00'))
-#            data = self.recv()
-#            self.debugger.debugData(data, "KESSEL_NEXT_1")
-#            if len(data) == 8:
-#                break
-#            counter += 1
-#
-#        self.send(bytes.fromhex('00 02 00 ff 1e 01 e0 00 00 00 ff 1f 00 00'))
-#        data = self.recv()
-#        self.debugger.debugData(data, "KESSEL_NEXT_2")
-#        if len(data) == 107:
-#            self.send(bytes.fromhex('00 14 00 11 1e 01 e0 00 00 00 9c 1f 00 00'))
-#            data = self.recv()
-#            self.debugger.debugData(data, "KESSEL_NEXT_3")
-#
-#        counter = 0
-#        while True and counter < 4:
-#            self.send(bytes.fromhex('00 07 00 ff ff ff ff ff 00 00 ec 1f 00 00'))
-#            data = self.recv()
-#            self.debugger.debugData(data, "KESSEL_FINAL_1")
-#            if len(data) == 8:
-#                break
-#            counter +=1
-#
-#        self.send(bytes.fromhex('00 07 00 ff 55 00 37 00 00 00 ec 1f 00 00'))
-#        data = self.recv()
-#        self.debugger.debugData(data, "KESSEL_INFO_1")
-#        self.send(bytes.fromhex('00 02 00 15 55 00 37 00 00 00 ff 1f 00 00'))
-#        data = self.recv()
-#        self.debugger.debugData(data, "KESSEL_INFO_2")
-#        self.extractKesselRunInfo(data)
-#
-        counter = 0
-        while True and counter < 4:
-            self.send(bytes.fromhex('00 0f 00 ff ff ff ff ff 00 00 b4 1f 00 00'))
-            data = self.recv()
-            self.debugger.debugData(data, "KESSEL_LEAVING_1")
-            if len(data) == 8:
-                break
-            counter += 1
+        self.send(bytes.fromhex('00 02 00 ff ff ff ff ff 00 00 ff 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_INFO_1")
+        self.send(bytes.fromhex('00 02 00 11 29 01 e6 00 00 00 ff 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_INFO_2")
 
-        self.send(bytes.fromhex('00 02 00 ff 0e 01 0e 00 00 00 ff 1f 00 00'))
+        self.send(bytes.fromhex('00 02 ff ff ff ff ff 00 00 ff 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_INFO_3")
+        self.send(bytes.fromhex('00 07 00 16 27 01 e2 00 00 00 ec 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_INFO_4")
+
+        self.extractKesselRunInfo(data)
+
+        self.send(bytes.fromhex('00 02 ff ff ff ff ff 00 00 ff 1f 00 00'))
+        data = self.recv()
+        self.debugger.debugData(data, "KESSEL_LEAVING_1")
+        self.send(bytes.fromhex('00 02 00 08 17 01 0f 00 00 00 ff 1f 00 00'))
         data = self.recv()
         self.debugger.debugData(data, "KESSEL_LEAVING_2")
-        if len(data) == 83:
-            self.send(bytes.fromhex('00 0f 00 08 0e 01 0e 00 00 00 b4 1f 00 00'))
-            data = self.recv()
-            self.debugger.debugData(data, "KESSEL_LEAVING_3")
 
 
     def close(self):
