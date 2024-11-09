@@ -22,7 +22,30 @@ class Debugger(object):
                 offset = offset + 16
 
 
+def extract_value(data:str, marker:str, unit:str = None, formatter = None):
+    offset = data.find(marker)
+    if offset < 0:
+        return None
+    value = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[offset+len(marker):]))]).strip()
+
+    if unit is not None:
+        if value[-(len(unit)):] != unit:
+            value = None
+        else:
+            value = value[:-(len(unit))].strip()
+
+    if value is not None and formatter is not None:
+        value = formatter(value)
+
+    return value
+
+def extract_temperature(data:str, marker:str):
+    return extract_value(data, marker, '\xb0\x43', lambda x: x.replace(',', '.'))
+
+
 CONNECT_MSG = bytes.fromhex('08 00 00 00 00 01 31 32 33 34')
+
+
 class HeatingConnector(object):
     def __init__(self, ip, port, verbose):
         self.controller = (ip, port)
@@ -39,93 +62,48 @@ class HeatingConnector(object):
         return data
 
 
-    def send(self, data):
+    def _send(self, data):
         message = self.token + data if self.token else data
         #print(message.hex())
         self.s.sendto(message, self.controller)
 
-
-    def extractMainMenuInfo(self, data):
-        timeOffset = data.find(b'\x12\x2c\x01\x56\x00')
-        self.data["time"] = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[timeOffset+5:]))]).strip()
-
-        tempInOffset = data.find(b'\x12\x2c\x01\x94\x00')
-        tempIn = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[tempInOffset+5:]))]).strip()
-        if tempIn[-2:] == '\xb0\x43':
-            self.data["temp-indoor"] = float(tempIn[:-2].strip().replace(',','.'))
-
-        tempOutOffset = data.find(b'\x12\x2c\x01\xcb\x00')
-        tempOut = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[tempOutOffset+5:]))]).strip()
-        if tempOut[-2:] == '\xb0\x43':
-            self.data["temp-outdoor"] = float(tempOut[:-2].strip().replace(',','.'))
+    def send(self, data, send_intermediate=False):
+        if send_intermediate:
+            self._send(bytes.fromhex('00 02 00 ff ff ff ff ff 00 00 ff 1f 00 00'))
+            self.debugger.debugData(self.recv(), "INTERMEDIATE")
+        self._send(data)
 
 
-    def extractSolarInfo(self, data):
-        totalKwhOffset = data.find(b'\x12\x2c\x01\xbc\x00')
-        totalKwh = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[totalKwhOffset+5:]))]).strip()
-        if totalKwh[-3:] == 'kWh':
-            self.data["total-kwh"] = int(totalKwh[:-3].strip())
+    def extract_main_menu_info(self, data):
+        self.data["time"] = extract_value(data, b'\x12\x2c\x01\x56\x00')
 
-        todayKwhOffset = data.find(b'\x12\x2c\x01\x9a\x00')
-        todayKwh = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[todayKwhOffset+5:]))]).strip()
-        if todayKwh[-3:] == 'kWh':
-            self.data["today-kwh"] = int(todayKwh[:-3].strip())
-
-        currentPanelTempOffset = data.find(b'\x12\x2c\x01\x56\x00')
-        currentPanelTemp = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[currentPanelTempOffset+5:]))]).strip()
-        if currentPanelTemp[-2:] == '\xb0\x43':
-            self.data["current-panel-temp"] = float(currentPanelTemp[:-2].strip().replace(',','.'))
-
-        maxPanelTempOffset = data.find(b'\x12\x2c\x01\x78\x00')
-        maxPanelTemp = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[maxPanelTempOffset+5:]))])
-        if maxPanelTemp[-2:] == '\xb0\x43':
-            self.data["max-panel-temp"] = float(maxPanelTemp[:-2].strip().replace(',','.'))
+        self.data["temp-indoor"] = extract_temperature(data, b'\x12\x2c\x01\x94\x00')
+        self.data["temp-outdoor"] = extract_temperature(data, b'\x12\x2c\x01\xcb\x00')
 
 
-    def extractWarmwasserInfo(self, data):
-        warmWasserTempOffset = data.find(b'\x12\x2c\x01\x34\x00')
-        warmWasserTemp = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[warmWasserTempOffset+5:]))]).strip()
-        if warmWasserTemp[-2:] == '\xb0\x43':
-            self.data["water-temp"] = float(warmWasserTemp[:-2].strip().replace(',','.'))
+    def extract_solar_info(self, data):
+        self.data["total-kwh"] = extract_value(data, b'\x12\x2c\x01\xbc\x00', "kWh")
+        self.data["today-kwh"] = extract_value(data, b'\x12\x2c\x01\x9a\x00', "kWh")
 
-        warmWasserTargetTempOffset = data.find(b'\x12\x2c\x01\x56\x00')
-        if warmWasserTargetTempOffset > -1:
-            warmWasserTargetTemp = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[warmWasserTargetTempOffset+5:]))]).strip()
-            if warmWasserTargetTemp[-2:] == '\xb0\x43':
-                self.data["water-target-temp"] = float(warmWasserTargetTemp[:-2].strip().replace(',','.'))
+        self.data["current-panel-temp"] = extract_temperature(data, b'\x12\x2c\x01\x56\x00')
+        self.data["max-panel-temp"] = extract_temperature(data, b'\x12\x2c\x01\x78\x00')
 
 
-    def extractKesselInfo(self, data):
-#        kesselInOffset = data.find(b'\x12\x4b\x00\xa3\x00')
-#        kesselIn = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselInOffset+5:]))]).strip()
-#        if kesselIn[-2:] != '\xb0\x43':
-#            return None
-#
-#        kesselIn = float(kesselIn[:-2].strip().replace(',','.'))
-#        print(f'KesselIn: {kesselIn}')
-#
-#        kesselOutOffset = data.find(b'\x12\x4b\x00\x4c\x00')
-#        kesselOut = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselOutOffset+5:]))]).strip()
-#        if kesselOut[-2:] != '\xb0\x43':
-#            return None
-#
-#        kesselOut = float(kesselOut[:-2].strip().replace(',','.'))
-#        print(f'KesselOut: {kesselOut}')
-
-        kesselStateOffset = data.find(b'\x12\xf0\x00\x65\x00')
-        kesselState = ''.join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselStateOffset+5:]))]).strip()
-        self.data["boiler-state"] = kesselState
+    def extract_water_info(self, data):
+        self.data["water-temp"] = extract_temperature(data, b'\x12\x2c\x01\x34\x00')
+        self.data["water-target-temp"] = extract_temperature(data, b'\x12\x2c\x01\x56\x00')
 
 
-    def extractKesselRunInfo(self, data):
-        kesselStartOffset = data.find(b'\x12\x2c\x01\x85\x00')
-        kesselStart = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselStartOffset+5:]))]).strip()
-        self.data["boiler-start-count"] = int(kesselStart.strip())
+    def extract_boiler_info(self, data):
+        self.data["boiler-in-temp"] = extract_temperature(data, b'\x12\x4b\x00\xa3\x00')
+        self.data["boiler-out-temp"] = extract_temperature(data, b'\x12\x4b\x00\x4c\x00')
 
-        kesselHoursOffset = data.find(b'\x12\x2c\x01\x4c\x00')
-        kesselHours = "".join([chr(x) for x in list(takewhile(lambda x: x != 0, data[kesselHoursOffset+5:]))]).strip()
-        if kesselHours[-2:] == ' h':
-            self.data["boiler-runtime"] = int(kesselHours[:-1].strip())
+        self.data["boiler-state"] = extract_value(data, b'\x12\xf0\x00\x65\x00')
+
+
+    def extract_boiler_run_info(self, data):
+        self.data["boiler-start-count"] = extract_value(data, b'\x12\x2c\x01\x85\x00')
+        self.data["boiler-runtime"] = extract_value(data, b'\x12\x2c\x01\x4c\x00', " h")
 
 
     def connect(self):
@@ -166,120 +144,79 @@ class HeatingConnector(object):
         #assert data[5:8] == bytes.fromhex('80 0a 00')
 
         if len(data) > 16: # temperatures and time are sometimes shown early
-            self.extractMainMenuInfo(data)
+            self.extract_main_menu_info(data)
 
 
-    def mainMenu(self):
+    def main_menu(self):
         self.send(bytes.fromhex('00 16 00 ff 13 00 dd 00 00 00 83 1f 00 00'))
         # NOTE this additional message with slightly changed content IS NEEDED, otherwise it's not going to switch!
         data = self.recv()
         self.debugger.debugData(data, "MAIN_MENU_1")
 
         if len(data) > 16:
-            self.extractMainMenuInfo(data)
+            self.extract_main_menu_info(data)
 
         self.send(bytes.fromhex('00 02 00 1e ff ff ff ff 00 00 ff 1f 00 00'))
         data = self.recv()
         self.debugger.debugData(data, "MAIN_MENU_2")
 
 
-    def warmwasser(self):
-        self.send(bytes.fromhex('00 02 00 ff 7c 00 4a 00 00 00 ff 1f 00 00'))
+    def return_to_main_menu(self):
+        self.send(bytes.fromhex('00 02 00 08 17 01 0f 00 00 00 ff 1f 00 00'), True)
         data = self.recv()
-        self.debugger.debugData(data, "WARMWASSER_1")
-        self.send(bytes.fromhex('00 14 00 20 ff ff ff ff 00 00 61 1f 00 00'))
+        self.debugger.debugData(data, "RETURN_TO_MAIN_MENU")
+
+
+    def water(self):
+        self.send(bytes.fromhex('00 14 00 20 ff ff ff ff 00 00 61 1f 00 00'), True)
         data = self.recv()
-        self.debugger.debugData(data, "WARMWASSER_2")
+        self.debugger.debugData(data, "WARMWASSER")
 
-        self.extractWarmwasserInfo(data)
+        self.extract_water_info(data)
 
-        counter = 0
-        while True and counter < 4:
-            self.send(bytes.fromhex('00 0b 00 ff ff ff ff ff 00 00 d0 1f 00 00'))
-            data = self.recv()
-            self.debugger.debugData(data, "WARMWASSER_LEAVING_1")
-            if len(data) == 8:
-                break
-            counter += 1
-
-        self.send(bytes.fromhex('00 02 00 ff 1c 00 db 00 00 00 ff 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "WARMWASSER_LEAVING_2")
-        if len(data) == 55:
-            self.send(bytes.fromhex('00 0b 00 09 1e 00 db 00 00 00 d0 1f 00 00'))
-            data = self.recv()
-            self.debugger.debugData(data, "WARMWASSER_LEAVING_3")
+        self.return_to_main_menu()
 
 
     def solar(self):
-        self.send(bytes.fromhex('00 14 00 ff c8 00 4a 00 00 00 61 1f 00 00'))
+        self.send(bytes.fromhex('00 02 00 1f c8 00 4a 00 00 00 ff 1f 00 00'), True)
         data = self.recv()
-        self.debugger.debugData(data, "SOLAR_1")
-        self.send(bytes.fromhex('00 02 00 1f c8 00 4a 00 00 00 ff 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "SOLAR_2")
-        self.extractSolarInfo(data)
+        self.debugger.debugData(data, "SOLAR")
+        self.extract_solar_info(data)
 
-        counter = 0
-        while True and counter < 4:
-            self.send(bytes.fromhex('00 55 00 1f ff ff ff ff 00 00 62 1e 00 00'))
-            data = self.recv()
-            self.debugger.debugData(data, "SOLAR_LEAVING_1")
-            if len(data) == 8:
-                break
-            counter += 1
-
-        self.send(bytes.fromhex('00 02 00 ff 13 00 dd 00 00 00 ff 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "SOLAR_LEAVING_2")
-        if len(data) == 125:
-            self.send(bytes.fromhex('00 13 00 01 13 00 dd 00 00 00 8a 1f 00 00'))
-            data = self.recv()
-            self.debugger.debugData(data, "SOLAR_LEAVING_3")
+        self.return_to_main_menu()
 
 
-    def kessel(self):
-        self.send(bytes.fromhex('00 02 00 ff ff ff ff ff 00 00 ff 1f 00 00'))
+    def boiler(self):
+        self.send(bytes.fromhex('00 14 00 25 80 00 c0 00 00 00 61 1f 00 00'), True)
         data = self.recv()
-        self.debugger.debugData(data, "KESSEL_1")
-        self.send(bytes.fromhex('00 14 00 25 80 00 c0 00 00 00 61 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "KESSEL_2")
-        self.extractKesselInfo(data)
+        self.debugger.debugData(data, "KESSEL")
 
-        self.send(bytes.fromhex('00 02 00 ff ff ff ff ff 00 00 ff 1f 00 00'))
+        self.extract_boiler_info(data)
+
+        self.send(bytes.fromhex('00 02 00 11 29 01 e6 00 00 00 ff 1f 00 00'), True)
         data = self.recv()
         self.debugger.debugData(data, "KESSEL_INFO_1")
-        self.send(bytes.fromhex('00 02 00 11 29 01 e6 00 00 00 ff 1f 00 00'))
+
+        self.send(bytes.fromhex('00 07 00 16 27 01 e2 00 00 00 ec 1f 00 00'), True)
         data = self.recv()
         self.debugger.debugData(data, "KESSEL_INFO_2")
 
-        self.send(bytes.fromhex('00 02 ff ff ff ff ff 00 00 ff 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "KESSEL_INFO_3")
-        self.send(bytes.fromhex('00 07 00 16 27 01 e2 00 00 00 ec 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "KESSEL_INFO_4")
+        self.extract_boiler_run_info(data)
 
-        self.extractKesselRunInfo(data)
-
-        self.send(bytes.fromhex('00 02 ff ff ff ff ff 00 00 ff 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "KESSEL_LEAVING_1")
-        self.send(bytes.fromhex('00 02 00 08 17 01 0f 00 00 00 ff 1f 00 00'))
-        data = self.recv()
-        self.debugger.debugData(data, "KESSEL_LEAVING_2")
+        self.return_to_main_menu()
 
 
     def close(self):
         self.s.close()
         for key, value in self.data.items():
-            print(f'{key}: {value}')
+            if value is not None:
+                print(f'{key}: {value}')
 
 
     def send_mqtt(self, client):
         for key, value in self.data.items():
-            client.publish(f"paradigma/systacomfort/{key}", value)
+            if value is not None:
+                client.publish(f"paradigma/systacomfort/{key}", value)
 
 
 def main(args):
@@ -288,6 +225,7 @@ def main(args):
 
     #mqttClient = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     mqttClient = mqtt.Client("paradigma")
+    mqttClient.on_disconnect = on_disconnect
 
     if args.mqttuser is not None:
         mqttClient.username_pw_set(args.mqttuser, args.mqttpass)
@@ -299,10 +237,10 @@ def main(args):
         try:
             hc = HeatingConnector(args.host, args.port, args.verbosity)
             hc.connect()
-            hc.mainMenu()
-            hc.warmwasser()
+            hc.main_menu()
+            hc.water()
             hc.solar()
-            hc.kessel()
+            hc.boiler()
             hc.close()
             if mqttClient.is_connected():
                 hc.send_mqtt(mqttClient)
