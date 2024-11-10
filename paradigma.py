@@ -81,31 +81,6 @@ class HeatingConnector(object):
         self.data["temp-outdoor"] = extract_temperature(data, b'\x12\x2c\x01\xcb\x00')
 
 
-    def extract_solar_info(self, data):
-        self.data["total-kwh"] = extract_value(data, b'\x12\x2c\x01\xbc\x00', "kWh")
-        self.data["today-kwh"] = extract_value(data, b'\x12\x2c\x01\x9a\x00', "kWh")
-
-        self.data["current-panel-temp"] = extract_temperature(data, b'\x12\x2c\x01\x56\x00')
-        self.data["max-panel-temp"] = extract_temperature(data, b'\x12\x2c\x01\x78\x00')
-
-
-    def extract_water_info(self, data):
-        self.data["water-temp"] = extract_temperature(data, b'\x12\x2c\x01\x34\x00')
-        self.data["water-target-temp"] = extract_temperature(data, b'\x12\x2c\x01\x56\x00')
-
-
-    def extract_boiler_info(self, data):
-        self.data["boiler-in-temp"] = extract_temperature(data, b'\x12\x4b\x00\xa3\x00')
-        self.data["boiler-out-temp"] = extract_temperature(data, b'\x12\x4b\x00\x4c\x00')
-
-        self.data["boiler-state"] = extract_value(data, b'\x12\xf0\x00\x65\x00')
-
-
-    def extract_boiler_run_info(self, data):
-        self.data["boiler-start-count"] = extract_value(data, b'\x12\x2c\x01\x85\x00')
-        self.data["boiler-runtime"] = extract_value(data, b'\x12\x2c\x01\x4c\x00', " h")
-
-
     def connect(self):
         self.s.sendto(CONNECT_MSG, self.controller)
         data = self.recv()
@@ -172,7 +147,8 @@ class HeatingConnector(object):
         data = self.recv()
         self.debugger.debugData(data, "WARMWASSER")
 
-        self.extract_water_info(data)
+        self.data["water-temp"] = extract_temperature(data, b'\x12\x2c\x01\x34\x00')
+        self.data["water-target-temp"] = extract_temperature(data, b'\x12\x2c\x01\x56\x00')
 
         self.return_to_main_menu()
 
@@ -181,7 +157,11 @@ class HeatingConnector(object):
         self.send(bytes.fromhex('00 02 00 1f c8 00 4a 00 00 00 ff 1f 00 00'), True)
         data = self.recv()
         self.debugger.debugData(data, "SOLAR")
-        self.extract_solar_info(data)
+
+        self.data["total-kwh"] = extract_value(data, b'\x12\x2c\x01\xbc\x00', "kWh")
+        self.data["today-kwh"] = extract_value(data, b'\x12\x2c\x01\x9a\x00', "kWh")
+        self.data["current-panel-temp"] = extract_temperature(data, b'\x12\x2c\x01\x56\x00')
+        self.data["max-panel-temp"] = extract_temperature(data, b'\x12\x2c\x01\x78\x00')
 
         self.return_to_main_menu()
 
@@ -191,7 +171,9 @@ class HeatingConnector(object):
         data = self.recv()
         self.debugger.debugData(data, "KESSEL")
 
-        self.extract_boiler_info(data)
+        self.data["boiler-in-temp"] = extract_temperature(data, b'\x12\x4b\x00\xa3\x00')
+        self.data["boiler-out-temp"] = extract_temperature(data, b'\x12\x4b\x00\x4c\x00')
+        self.data["boiler-state"] = extract_value(data, b'\x12\xf0\x00\x65\x00')
 
         self.send(bytes.fromhex('00 02 00 11 29 01 e6 00 00 00 ff 1f 00 00'), True)
         data = self.recv()
@@ -201,7 +183,40 @@ class HeatingConnector(object):
         data = self.recv()
         self.debugger.debugData(data, "KESSEL_INFO_2")
 
-        self.extract_boiler_run_info(data)
+        self.data["boiler-start-count"] = extract_value(data, b'\x12\x2c\x01\x85\x00')
+        self.data["boiler-runtime"] = extract_value(data, b'\x12\x2c\x01\x4c\x00', " h")
+
+        self.return_to_main_menu()
+
+
+    def error(self):
+        self.send(bytes.fromhex("00 14 00 23 33 00 bb 00 00 00 61 1f 00 00"), True)
+        data = self.recv()
+        self.debugger.debugData(data, "ERROR_1")
+
+        self.send(bytes.fromhex("00 07 00 15 80 00 9e 00 00 00 ec 1f 00 00"), True)
+        data = self.recv()
+        self.debugger.debugData(data, "ERROR_2")
+
+        self.send(bytes.fromhex("00 07 00 15 80 00 9e 00 00 00 ec 1f 00 00"), True)
+        data = self.recv()
+        self.debugger.debugData(data, "ERROR_SENSOR")
+        self.data["error-sensor"] = extract_value(data, b'\x12\x2c\x01\x86\x00')
+
+        self.send(bytes.fromhex("00 0b 00 05 c6 00 e6 00 00 00 d6 1f 00 00"), True)
+        data = self.recv()
+        self.debugger.debugData(data, "ERROR_SOLAR")
+        self.data["error-solar"] = extract_value(data, b'\x12\x2c\x01\x86\x00')
+
+        self.send(bytes.fromhex("00 0b 00 05 c6 00 e6 00 00 00 d6 1f 00 00"), True)
+        data = self.recv()
+        self.debugger.debugData(data, "ERROR_WATER")
+        self.data["error-water"] = extract_value(data, b'\x12\x2c\x01\x86\x00')
+
+        self.send(bytes.fromhex("00 0b 00 05 c6 00 e6 00 00 00 d6 1f 00 00"), True)
+        data = self.recv()
+        self.debugger.debugData(data, "WARNING_WATER")
+        self.data["warning-water"] = extract_value(data, b'\x12\x2c\x01\x86\x00')
 
         self.return_to_main_menu()
 
@@ -241,6 +256,7 @@ def main(args):
             hc.water()
             hc.solar()
             hc.boiler()
+            hc.error()
             hc.close()
             if mqttClient.is_connected():
                 hc.send_mqtt(mqttClient)
