@@ -189,6 +189,17 @@ class HeatingConnector(object):
         self.return_to_main_menu()
 
 
+    def buffer(self):
+        self.send(bytes.fromhex("00 14 00 22 22 01 53 00 00 00 61 1f 00 00"), True)
+        data = self.recv()
+        self.debugger.debugData(data, "BUFFER")
+
+        self.data["buffer-top-temp"] = extract_temperature(data, b'\x12\x7d\x00\x4c\x00')
+        self.data["buffer-bottom-temp"] = extract_temperature(data, b'\x12\x7d\x00\xa3\x00')
+
+        self.return_to_main_menu()
+
+
     def error(self):
         self.send(bytes.fromhex("00 14 00 23 33 00 bb 00 00 00 61 1f 00 00"), True)
         data = self.recv()
@@ -256,6 +267,7 @@ def main(args):
             hc.water()
             hc.solar()
             hc.boiler()
+            hc.buffer()
             hc.error()
             hc.close()
             if mqttClient.is_connected():
